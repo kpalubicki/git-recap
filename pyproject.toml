@@ -1,0 +1,54 @@
+[project]
+name = "git-recap"
+version = "0.1.0"
+description = "Turn your git commits into readable summaries using a local LLM"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Kamil Palubicki", email = "palubicki.kamil@gmail.com" }
+]
+keywords = ["git", "cli", "llm", "ollama", "developer-tools"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Version Control :: Git",
+]
+dependencies = [
+    "click>=8.1",
+    "gitpython>=3.1",
+    "httpx>=0.27",
+    "rich>=13.0",
+]
+
+[project.scripts]
+git-recap = "git_recap.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["git_recap"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_functions = "test_*"
+markers = [
+    "integration: marks tests as integration tests (require Ollama)",
+]
