@@ -28,9 +28,20 @@ console = Console()
 @click.option(
     "--since",
     "-s",
-    default="1 week ago",
-    show_default=True,
-    help='Time range for commits (e.g. "1 day ago", "2026-03-01").',
+    default=None,
+    help='Time range for commits (e.g. "1 day ago", "2026-03-01"). Defaults to 1 week ago.',
+)
+@click.option(
+    "--today",
+    is_flag=True,
+    default=False,
+    help='Shortcut for --since "1 day ago".',
+)
+@click.option(
+    "--week",
+    is_flag=True,
+    default=False,
+    help='Shortcut for --since "1 week ago" (default).',
 )
 @click.option(
     "--author",
@@ -44,6 +55,14 @@ console = Console()
     default=DEFAULT_MODEL,
     show_default=True,
     help="Ollama model to use for summarization.",
+)
+@click.option(
+    "--format",
+    "fmt",
+    default="text",
+    type=click.Choice(["text", "json"]),
+    show_default=True,
+    help="Output format.",
 )
 @click.option(
     "--raw",
@@ -61,9 +80,12 @@ console = Console()
 @click.version_option()
 def main(
     repo: Path,
-    since: str,
+    since: str | None,
+    today: bool,
+    week: bool,
     author: str | None,
     model: str,
+    fmt: str,
     raw: bool,
     output: Path | None,
 ) -> None:
@@ -73,44 +95,85 @@ def main(
 
     \b
       git-recap                        # summarize the last week in current repo
-      git-recap --since "1 day ago"    # just today
+      git-recap --today                # just today's commits
+      git-recap --week                 # last 7 days (same as default)
+      git-recap --since "2026-03-01"   # from a specific date
+      git-recap --format json          # machine-readable output
       git-recap --repo ~/projects/foo  # different repo
       git-recap --raw                  # skip the LLM, just show commits
       git-recap --output summary.txt   # save to file
     """
+    if today:
+        since_resolved = "1 day ago"
+    elif week:
+        since_resolved = "1 week ago"
+    elif since:
+        since_resolved = since
+    else:
+        since_resolved = "1 week ago"
+
     try:
-        commits = get_commits(repo, since=since, author=author)
+        commits = get_commits(repo, since=since_resolved, author=author)
     except RuntimeError as e:
         console.print(f"[red]Error:[/red] {e}")
         raise click.Abort()
 
     if not commits:
-        console.print(f"[yellow]No commits found since '{since}'.[/yellow]")
+        console.print(f"[yellow]No commits found since '{since_resolved}'.[/yellow]")
         return
 
     commits_text = format_commits_for_prompt(commits)
 
     if raw:
-        console.print(Panel(commits_text, title=f"[bold]{len(commits)} commits[/bold]", border_style="dim"))
+        if fmt == "json":
+            import json
+            serializable = [
+                {
+                    "hash": c.hash,
+                    "author": c.author,
+                    "date": c.date.isoformat(),
+                    "message": c.message,
+                    "files_changed": c.files_changed,
+                }
+                for c in commits
+            ]
+            click.echo(json.dumps({"commits": serializable}, indent=2))
+        else:
+            console.print(Panel(commits_text, title=f"[bold]{len(commits)} commits[/bold]", border_style="dim"))
         return
 
-    console.print(f"[dim]Found {len(commits)} commit(s) since '{since}'. Summarizing...[/dim]")
+    if fmt != "json":
+        console.print(f"[dim]Found {len(commits)} commit(s) since '{since_resolved}'. Summarizing...[/dim]")
 
-    with Live(Spinner("dots", text=" Thinking..."), console=console, refresh_per_second=10):
+    if fmt == "json":
         try:
             summary = summarize(commits_text, model=model)
         except RuntimeError as e:
-            console.print(f"\n[red]Error:[/red] {e}")
+            console.print(f"[red]Error:[/red] {e}", file=console.stderr)
             raise click.Abort()
+    else:
+        with Live(Spinner("dots", text=" Thinking..."), console=console, refresh_per_second=10):
+            try:
+                summary = summarize(commits_text, model=model)
+            except RuntimeError as e:
+                console.print(f"\n[red]Error:[/red] {e}")
+                raise click.Abort()
 
-    console.print()
-    console.print(Panel(
-        summary,
-        title=f"[bold green]Recap[/bold green] — {len(commits)} commit(s) since '{since}'",
-        border_style="green",
-        padding=(1, 2),
-    ))
+    if fmt == "json":
+        import json
+        result = {"since": since_resolved, "commit_count": len(commits), "summary": summary}
+        output_text = json.dumps(result, indent=2)
+        click.echo(output_text)
+    else:
+        console.print()
+        console.print(Panel(
+            summary,
+            title=f"[bold green]Recap[/bold green] — {len(commits)} commit(s) since '{since_resolved}'",
+            border_style="green",
+            padding=(1, 2),
+        ))
+        output_text = summary
 
     if output:
-        output.write_text(summary, encoding="utf-8")
+        output.write_text(output_text, encoding="utf-8")
         console.print(f"[dim]Saved to {output}[/dim]")

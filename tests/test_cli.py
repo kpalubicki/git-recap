@@ -1,0 +1,105 @@
+"""Tests for CLI flags and output modes."""
+
+import json
+from pathlib import Path
+from unittest.mock import patch, MagicMock
+
+import pytest
+from click.testing import CliRunner
+
+from git_recap.cli import main
+from git_recap.git import Commit
+from datetime import datetime
+
+
+SAMPLE_COMMITS = [
+    Commit(
+        hash="abc12345",
+        author="Kamil",
+        date=datetime(2026, 3, 21, 10, 0, 0),
+        message="add user auth",
+        files_changed=["src/auth.py"],
+    )
+]
+
+
+def _patch_commits(commits=None):
+    return patch("git_recap.cli.get_commits", return_value=commits or SAMPLE_COMMITS)
+
+
+def _patch_summarizer(text="summary text"):
+    return patch("git_recap.cli.summarize", return_value=text)
+
+
+def test_today_flag():
+    runner = CliRunner()
+    with _patch_commits(), _patch_summarizer():
+        with patch("git_recap.cli.format_commits_for_prompt", return_value="commits") as mock_fmt:
+            with patch("git_recap.cli.get_commits", return_value=SAMPLE_COMMITS) as mock_get:
+                result = runner.invoke(main, ["--today", "--raw"])
+    assert result.exit_code == 0
+
+
+def test_week_flag():
+    runner = CliRunner()
+    with _patch_commits(), _patch_summarizer():
+        result = runner.invoke(main, ["--week", "--raw"])
+    assert result.exit_code == 0
+
+
+def test_format_json_with_raw():
+    runner = CliRunner()
+    with _patch_commits():
+        result = runner.invoke(main, ["--raw", "--format", "json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert "commits" in data
+    assert isinstance(data["commits"], list)
+
+
+def test_format_json_with_summary():
+    runner = CliRunner()
+    with _patch_commits(), _patch_summarizer("this week you did X and Y"):
+        result = runner.invoke(main, ["--format", "json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["summary"] == "this week you did X and Y"
+    assert data["commit_count"] == 1
+    assert "since" in data
+
+
+def test_format_text_default():
+    runner = CliRunner()
+    with _patch_commits(), _patch_summarizer("recap text"):
+        result = runner.invoke(main, [])
+    assert result.exit_code == 0
+    assert "recap text" in result.output
+
+
+def test_no_commits_exits_cleanly():
+    runner = CliRunner()
+    with patch("git_recap.cli.get_commits", return_value=[]):
+        result = runner.invoke(main, [])
+    assert result.exit_code == 0
+    assert "No commits found" in result.output
+
+
+def test_output_flag_writes_file(tmp_path):
+    out = tmp_path / "summary.txt"
+    runner = CliRunner()
+    with _patch_commits(), _patch_summarizer("my recap"):
+        result = runner.invoke(main, ["--output", str(out)])
+    assert result.exit_code == 0
+    assert out.exists()
+    assert out.read_text() == "my recap"
+
+
+def test_output_flag_json(tmp_path):
+    out = tmp_path / "summary.json"
+    runner = CliRunner()
+    with _patch_commits(), _patch_summarizer("my recap"):
+        result = runner.invoke(main, ["--format", "json", "--output", str(out)])
+    assert result.exit_code == 0
+    assert out.exists()
+    data = json.loads(out.read_text())
+    assert data["summary"] == "my recap"
