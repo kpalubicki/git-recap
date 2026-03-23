@@ -10,6 +10,7 @@ from rich.panel import Panel
 from rich.spinner import Spinner
 from rich.live import Live
 
+from git_recap.config import load as load_config
 from git_recap.git import get_commits, format_commits_for_prompt
 from git_recap.summarizer import summarize, DEFAULT_MODEL
 
@@ -89,6 +90,7 @@ def main(
     raw: bool,
     output: Path | None,
 ) -> None:
+    cfg = load_config()
     """Turn your git commits into a readable summary using a local LLM.
 
     Examples:
@@ -110,7 +112,12 @@ def main(
     elif since:
         since_resolved = since
     else:
-        since_resolved = "1 week ago"
+        since_resolved = cfg.get("since", "1 week ago")
+
+    if model == DEFAULT_MODEL and cfg.get("model"):
+        model = cfg["model"]
+    if author is None and cfg.get("author"):
+        author = cfg["author"]
 
     try:
         commits = get_commits(repo, since=since_resolved, author=author)
