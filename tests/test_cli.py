@@ -103,3 +103,32 @@ def test_output_flag_json(tmp_path):
     assert out.exists()
     data = json.loads(out.read_text())
     assert data["summary"] == "my recap"
+
+
+def test_format_markdown_with_summary():
+    runner = CliRunner()
+    with _patch_commits(), _patch_summarizer("added auth and tests"):
+        result = runner.invoke(main, ["--format", "markdown"])
+    assert result.exit_code == 0
+    assert "## Git Recap" in result.output
+    assert "added auth and tests" in result.output
+
+
+def test_format_markdown_with_raw():
+    runner = CliRunner()
+    with _patch_commits():
+        result = runner.invoke(main, ["--raw", "--format", "markdown"])
+    assert result.exit_code == 0
+    assert "## Commits since" in result.output
+    assert "abc12345"[:7] in result.output
+    assert "add user auth" in result.output
+
+
+def test_format_markdown_output_file(tmp_path):
+    out = tmp_path / "recap.md"
+    runner = CliRunner()
+    with _patch_commits(), _patch_summarizer("markdown summary"):
+        result = runner.invoke(main, ["--format", "markdown", "--output", str(out)])
+    assert result.exit_code == 0
+    assert out.exists()
+    assert "## Git Recap" in out.read_text()

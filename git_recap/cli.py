@@ -61,9 +61,9 @@ console = Console()
     "--format",
     "fmt",
     default="text",
-    type=click.Choice(["text", "json"]),
+    type=click.Choice(["text", "json", "markdown"]),
     show_default=True,
-    help="Output format.",
+    help="Output format. 'markdown' is suitable for pasting into Notion or Obsidian.",
 )
 @click.option(
     "--raw",
@@ -101,6 +101,7 @@ def main(
       git-recap --week                 # last 7 days (same as default)
       git-recap --since "2026-03-01"   # from a specific date
       git-recap --format json          # machine-readable output
+      git-recap --format markdown      # paste into Notion or Obsidian
       git-recap --repo ~/projects/foo  # different repo
       git-recap --raw                  # skip the LLM, just show commits
       git-recap --output summary.txt   # save to file
@@ -145,11 +146,20 @@ def main(
                 for c in commits
             ]
             click.echo(json.dumps({"commits": serializable}, indent=2))
+        elif fmt == "markdown":
+            lines = [f"## Commits since {since_resolved}", ""]
+            for c in commits:
+                lines.append(f"- `{c.hash[:7]}` {c.message} — {c.author} ({c.date.strftime('%Y-%m-%d')})")
+            raw_md = "\n".join(lines)
+            click.echo(raw_md)
+            if output:
+                output.write_text(raw_md, encoding="utf-8")
+                console.print(f"[dim]Saved to {output}[/dim]")
         else:
             console.print(Panel(commits_text, title=f"[bold]{len(commits)} commits[/bold]", border_style="dim"))
         return
 
-    if fmt != "json":
+    if fmt not in ("json", "markdown"):
         console.print(f"[dim]Found {len(commits)} commit(s) since '{since_resolved}'. Summarizing...[/dim]")
 
     if fmt == "json":
@@ -170,6 +180,13 @@ def main(
         import json
         result = {"since": since_resolved, "commit_count": len(commits), "summary": summary}
         output_text = json.dumps(result, indent=2)
+        click.echo(output_text)
+    elif fmt == "markdown":
+        output_text = "\n".join([
+            f"## Git Recap — {len(commits)} commit(s) since {since_resolved}",
+            "",
+            summary,
+        ])
         click.echo(output_text)
     else:
         console.print()
