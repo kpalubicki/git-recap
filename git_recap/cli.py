@@ -21,9 +21,8 @@ console = Console()
 @click.option(
     "--repo",
     "-r",
-    default=".",
-    show_default=True,
-    help="Path to the git repository.",
+    multiple=True,
+    help="Path to a git repository. Repeat to recap across multiple repos.",
     type=click.Path(exists=True, file_okay=False, path_type=Path),
 )
 @click.option(
@@ -80,7 +79,7 @@ console = Console()
 )
 @click.version_option()
 def main(
-    repo: Path,
+    repo: tuple[Path, ...],
     since: str | None,
     today: bool,
     week: bool,
@@ -103,6 +102,7 @@ def main(
       git-recap --format json          # machine-readable output
       git-recap --format markdown      # paste into Notion or Obsidian
       git-recap --repo ~/projects/foo  # different repo
+      git-recap --repo ~/a --repo ~/b  # recap across multiple repos
       git-recap --raw                  # skip the LLM, just show commits
       git-recap --output summary.txt   # save to file
     """
@@ -120,47 +120,77 @@ def main(
     if author is None and cfg.get("author"):
         author = cfg["author"]
 
-    try:
-        commits = get_commits(repo, since=since_resolved, author=author)
-    except RuntimeError as e:
-        console.print(f"[red]Error:[/red] {e}")
-        raise click.Abort()
+    repos = repo or (Path("."),)
+    multi = len(repos) > 1
 
-    if not commits:
+    repo_commits: list[tuple[str, list]] = []
+    for repo_path in repos:
+        try:
+            commits = get_commits(repo_path, since=since_resolved, author=author)
+        except RuntimeError as e:
+            console.print(f"[red]Error ({repo_path}):[/red] {e}")
+            raise click.Abort()
+        repo_commits.append((repo_path.resolve().name, commits))
+
+    total_commits = sum(len(c) for _, c in repo_commits)
+    if total_commits == 0:
         console.print(f"[yellow]No commits found since '{since_resolved}'.[/yellow]")
         return
 
-    commits_text = format_commits_for_prompt(commits)
+    if multi:
+        sections = []
+        for name, commits in repo_commits:
+            if commits:
+                sections.append(f"=== {name} ({len(commits)} commits) ===\n{format_commits_for_prompt(commits)}")
+        commits_text = "\n\n".join(sections)
+    else:
+        commits = repo_commits[0][1]
+        commits_text = format_commits_for_prompt(commits)
 
     if raw:
         if fmt == "json":
             import json
-            serializable = [
-                {
-                    "hash": c.hash,
-                    "author": c.author,
-                    "date": c.date.isoformat(),
-                    "message": c.message,
-                    "files_changed": c.files_changed,
+            if multi:
+                out = {
+                    name: [
+                        {"hash": c.hash, "author": c.author, "date": c.date.isoformat(),
+                         "message": c.message, "files_changed": c.files_changed}
+                        for c in commits
+                    ]
+                    for name, commits in repo_commits
                 }
-                for c in commits
-            ]
-            click.echo(json.dumps({"commits": serializable}, indent=2))
+                click.echo(json.dumps({"repos": out}, indent=2))
+            else:
+                serializable = [
+                    {"hash": c.hash, "author": c.author, "date": c.date.isoformat(),
+                     "message": c.message, "files_changed": c.files_changed}
+                    for c in commits
+                ]
+                click.echo(json.dumps({"commits": serializable}, indent=2))
         elif fmt == "markdown":
             lines = [f"## Commits since {since_resolved}", ""]
-            for c in commits:
-                lines.append(f"- `{c.hash[:7]}` {c.message} — {c.author} ({c.date.strftime('%Y-%m-%d')})")
+            if multi:
+                for name, repo_c in repo_commits:
+                    if repo_c:
+                        lines.append(f"### {name}")
+                        for c in repo_c:
+                            lines.append(f"- `{c.hash[:7]}` {c.message} — {c.author} ({c.date.strftime('%Y-%m-%d')})")
+                        lines.append("")
+            else:
+                for c in commits:
+                    lines.append(f"- `{c.hash[:7]}` {c.message} — {c.author} ({c.date.strftime('%Y-%m-%d')})")
             raw_md = "\n".join(lines)
             click.echo(raw_md)
             if output:
                 output.write_text(raw_md, encoding="utf-8")
                 console.print(f"[dim]Saved to {output}[/dim]")
         else:
-            console.print(Panel(commits_text, title=f"[bold]{len(commits)} commits[/bold]", border_style="dim"))
+            console.print(Panel(commits_text, title=f"[bold]{total_commits} commits[/bold]", border_style="dim"))
         return
 
     if fmt not in ("json", "markdown"):
-        console.print(f"[dim]Found {len(commits)} commit(s) since '{since_resolved}'. Summarizing...[/dim]")
+        label = f"{total_commits} commit(s) across {len(repos)} repos" if multi else f"{total_commits} commit(s)"
+        console.print(f"[dim]Found {label} since '{since_resolved}'. Summarizing...[/dim]")
 
     if fmt == "json":
         try:
@@ -176,14 +206,15 @@ def main(
                 console.print(f"\n[red]Error:[/red] {e}")
                 raise click.Abort()
 
+    repo_label = f"{len(repos)} repos" if multi else repos[0].resolve().name
     if fmt == "json":
         import json
-        result = {"since": since_resolved, "commit_count": len(commits), "summary": summary}
+        result = {"since": since_resolved, "commit_count": total_commits, "repos": repo_label, "summary": summary}
         output_text = json.dumps(result, indent=2)
         click.echo(output_text)
     elif fmt == "markdown":
         output_text = "\n".join([
-            f"## Git Recap — {len(commits)} commit(s) since {since_resolved}",
+            f"## Git Recap — {total_commits} commit(s) since {since_resolved}",
             "",
             summary,
         ])
@@ -192,7 +223,7 @@ def main(
         console.print()
         console.print(Panel(
             summary,
-            title=f"[bold green]Recap[/bold green] — {len(commits)} commit(s) since '{since_resolved}'",
+            title=f"[bold green]Recap[/bold green] — {total_commits} commit(s) since '{since_resolved}'",
             border_style="green",
             padding=(1, 2),
         ))

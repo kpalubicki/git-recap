@@ -132,3 +132,58 @@ def test_format_markdown_output_file(tmp_path):
     assert result.exit_code == 0
     assert out.exists()
     assert "## Git Recap" in out.read_text()
+
+
+def test_multi_repo_raw_text(tmp_path):
+    repo1 = tmp_path / "alpha"
+    repo2 = tmp_path / "beta"
+    repo1.mkdir()
+    repo2.mkdir()
+
+    commits_a = [Commit(hash="aaa1111", author="A", date=datetime(2026, 3, 21), message="feat alpha", files_changed=[])]
+    commits_b = [Commit(hash="bbb2222", author="B", date=datetime(2026, 3, 22), message="feat beta", files_changed=[])]
+
+    runner = CliRunner()
+    with patch("git_recap.cli.get_commits", side_effect=[commits_a, commits_b]):
+        result = runner.invoke(main, ["--repo", str(repo1), "--repo", str(repo2), "--raw"])
+    assert result.exit_code == 0
+    assert "alpha" in result.output
+    assert "beta" in result.output
+
+
+def test_multi_repo_json_raw(tmp_path):
+    repo1 = tmp_path / "alpha"
+    repo2 = tmp_path / "beta"
+    repo1.mkdir()
+    repo2.mkdir()
+
+    commits_a = [Commit(hash="aaa1111", author="A", date=datetime(2026, 3, 21), message="feat alpha", files_changed=[])]
+    commits_b = [Commit(hash="bbb2222", author="B", date=datetime(2026, 3, 22), message="feat beta", files_changed=[])]
+
+    runner = CliRunner()
+    with patch("git_recap.cli.get_commits", side_effect=[commits_a, commits_b]):
+        result = runner.invoke(main, ["--repo", str(repo1), "--repo", str(repo2), "--raw", "--format", "json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert "repos" in data
+    assert "alpha" in data["repos"]
+    assert "beta" in data["repos"]
+
+
+def test_multi_repo_summary(tmp_path):
+    repo1 = tmp_path / "alpha"
+    repo2 = tmp_path / "beta"
+    repo1.mkdir()
+    repo2.mkdir()
+
+    commits_a = [Commit(hash="aaa1111", author="A", date=datetime(2026, 3, 21), message="feat alpha", files_changed=[])]
+    commits_b = [Commit(hash="bbb2222", author="B", date=datetime(2026, 3, 22), message="feat beta", files_changed=[])]
+
+    runner = CliRunner()
+    with patch("git_recap.cli.get_commits", side_effect=[commits_a, commits_b]), \
+         _patch_summarizer("combined recap"):
+        result = runner.invoke(main, ["--repo", str(repo1), "--repo", str(repo2), "--format", "json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["commit_count"] == 2
+    assert data["summary"] == "combined recap"
